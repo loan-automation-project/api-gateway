@@ -5,13 +5,21 @@ import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
+import java.security.Key;
 
 @Component
 public class AuthenticationFilter extends AbstractGatewayFilterFactory<AuthenticationFilter.Config> {
 
     @Autowired
     RouteValidator validator;
+
+    private static final String SECRET = "5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437";
 
     public AuthenticationFilter() {
         super(Config.class);
@@ -21,36 +29,53 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
     }
 
     public GatewayFilter apply(Config config) {
-        return ((exchange, chain) -> {
-            // for the uris NOT specified in the RouteValidator do the following steps
+        return (exchange, chain) -> {
             if (validator.isSecured.test(exchange.getRequest())) {
-                // check if the exchange request header contains the Authorization header
-                if (!exchange.getRequest().getHeaders().containsKey(HttpHeaders.AUTHORIZATION)) {
-                    throw new RuntimeException("Missing Authorization Header");
+                HttpHeaders headers = exchange.getRequest().getHeaders();
+
+                if (!headers.containsKey(HttpHeaders.AUTHORIZATION)) {
+                    throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing Authorization Header");
                 }
-                // take out the AUthorization header
-                String authHeaderToken = exchange.getRequest().getHeaders().get(HttpHeaders.AUTHORIZATION).get(0);
-                if (authHeaderToken != null && authHeaderToken.startsWith("Bearer")) {
-                    // remove Bearer from front
+
+                String authHeaderToken = headers.getFirst(HttpHeaders.AUTHORIZATION);
+                if (authHeaderToken != null && authHeaderToken.startsWith("Bearer ")) {
                     authHeaderToken = authHeaderToken.substring(7);
+                } else {
+                    throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid Authorization Header");
                 }
+
                 try {
-                    // now consume /api/auth/validate/token of authentication-service using
-                    // RestClient
-                    // can keep this call in a seperate JwtUtil class and call
-                    RestClient restClient = RestClient.create();
-                    restClient.get().uri("http://localhost:8090/api/auth/validate/token?token=" + authHeaderToken)
-                            .retrieve().body(Boolean.class);
-                    // also instead of making a RestClient call for every request, we can validate
-                    // the token here in api-gateway itself
+                    // Extract username from token
+                    String username = extractUsername(authHeaderToken);
+                    if (username == null || username.isEmpty()) {
+                        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid Token");
+                    }
+
+                    // Attach username to request headers
+                    exchange = exchange.mutate()
+                            .request(r -> r.header("X-Username", username))
+                            .build();
+
                 } catch (Exception e) {
-                    System.out.println(e.getMessage());
-                    throw new RuntimeException("Inavlid Access!! : " + e.getMessage());
+                    throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid Token: " + e.getMessage());
                 }
             }
-            // for other uris simply chain the request.
             return chain.filter(exchange);
-        });
+        };
+    }
+
+    private String extractUsername(String token) {
+        Claims claims = Jwts.parserBuilder()
+                .setSigningKey(getSignKey())
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
+        return claims.getSubject();
+    }
+
+    private Key getSignKey() {
+        byte[] keyBytes = Decoders.BASE64.decode(SECRET);
+        return Keys.hmacShaKeyFor(keyBytes);
     }
 
 }
