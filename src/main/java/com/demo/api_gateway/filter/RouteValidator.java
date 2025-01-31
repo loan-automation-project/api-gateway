@@ -21,5 +21,5 @@ public class RouteValidator {
             .noneMatch(uri -> request
                     .getURI()
                     .getPath()
-                    .contains(uri));
+                    .startsWith(uri));
 }
