@@ -16,10 +16,19 @@ public class RouteValidator {
             "/api/auth/validate/token",
             "/eureka"  // If you need to access Eureka dashboard
     );
-    public Predicate<ServerHttpRequest> isSecured = request -> openApiEndpoints
-            .stream()
-            .noneMatch(uri -> request
-                    .getURI()
-                    .getPath()
-                    .startsWith(uri));
+//    public Predicate<ServerHttpRequest> isSecured = request -> openApiEndpoints
+//            .stream()
+//            .noneMatch(uri -> request
+//                    .getURI()
+//                    .getPath()
+//                    .startsWith(uri));
+
+    public Predicate<ServerHttpRequest> isSecured = request -> {
+        boolean blocked = openApiEndpoints.stream().noneMatch(uri -> request.getURI().getPath().startsWith(uri));
+        if (blocked) {
+            System.out.println("Blocked request: " + request.getURI().getPath());
+        }
+        return blocked;
+    };
+
 }
